@@ -1,0 +1,3 @@
+area,perimeter,aspect_ratio,edge_density,entropy,class,cluster,severity
+3909.5,406.95,0.228,0.0995,0.081,Shelling,0,Moderate
+383.0,84.14,0.424,0.2219,0.012,Cracks-Scratches,1,Severe
