@@ -13,3 +13,5 @@ __pycache__/
 
 # Large model files (optional)
 *.pt
+
+database/railway.db
