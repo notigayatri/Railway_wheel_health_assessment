@@ -59,10 +59,6 @@ class Inspection:
     severity: Optional[str] = None
     confidence: Optional[float] = None
 
-    # Future Modules
-    reliability_score: Optional[float] = None
-    health_index: Optional[float] = None
-
     # Performance
     processing_time: Optional[float] = None  # seconds
 

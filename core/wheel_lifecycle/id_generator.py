@@ -1,47 +1,41 @@
-import json
+import sqlite3
 from pathlib import Path
 
-# Path to metadata.json
-METADATA_FILE = (
-    Path(__file__).resolve().parent.parent.parent
-    / "database"
-    / "metadata.json"
-)
-
-
-def _load_metadata():
-    """Load metadata from JSON file."""
-
-    with open(METADATA_FILE, "r") as file:
-        return json.load(file)
-
-
-def _save_metadata(metadata):
-    """Save metadata back to JSON."""
-
-    with open(METADATA_FILE, "w") as file:
-        json.dump(metadata, file, indent=4)
+DB_PATH = Path(__file__).resolve().parent.parent.parent / "database" / "railway.db"
 
 
 def generate_asset_id():
-    """Generate the next Wheel Asset ID."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
-    metadata = _load_metadata()
+    cursor.execute("SELECT asset_id FROM wheels ORDER BY asset_id DESC LIMIT 1")
+    row = cursor.fetchone()
 
-    metadata["last_asset_id"] += 1
+    if row is None:
+        next_id = 1
+    else:
+        next_id = int(row[0][2:]) + 1
 
-    _save_metadata(metadata)
+    conn.close()
 
-    return f"WH{metadata['last_asset_id']:06d}"
+    return f"WH{next_id:06d}"
 
 
 def generate_inspection_id():
-    """Generate the next Inspection ID."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
-    metadata = _load_metadata()
+    cursor.execute(
+        "SELECT inspection_id FROM inspections ORDER BY inspection_id DESC LIMIT 1"
+    )
 
-    metadata["last_inspection_id"] += 1
+    row = cursor.fetchone()
 
-    _save_metadata(metadata)
+    if row is None:
+        next_id = 1
+    else:
+        next_id = int(row[0][3:]) + 1
 
-    return f"INS{metadata['last_inspection_id']:06d}"
+    conn.close()
+
+    return f"INS{next_id:06d}"

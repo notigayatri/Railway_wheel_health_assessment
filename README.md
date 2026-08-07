@@ -1,2 +1,11 @@
-# Railway_wheel_health_assessment
-AI assisted railway wheel defect system that detects wheel defects and assist in maintenance and repair
+Railway Wheel Health Assessment
+
+Modules:
+- Detection
+- Severity Assessment
+- Digital Wheel Health Record
+
+Tech Stack
+- Python
+- SQLite
+- FastAPI (Upcoming)
