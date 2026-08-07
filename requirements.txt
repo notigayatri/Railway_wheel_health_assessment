@@ -4,3 +4,5 @@ numpy
 pandas
 scikit-image
 scikit-learn
+torch
+grad-cam

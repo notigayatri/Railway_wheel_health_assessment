@@ -15,3 +15,5 @@ __pycache__/
 *.pt
 
 database/railway.db
+
+outputs/gradcam/
