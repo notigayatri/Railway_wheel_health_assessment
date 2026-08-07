@@ -1,11 +1,17 @@
-from core.wheel_lifecycle.id_generator import generate_id
+from core.wheel_lifecycle.id_generator import (
+    generate_asset_id,
+    generate_inspection_id,
+)
 
-print(generate_id("WH", 1))
-print(generate_id("WH", 27))
-print(generate_id("WH", 352))
+print("Generating Asset IDs")
+
+print(generate_asset_id())
+print(generate_asset_id())
+print(generate_asset_id())
 
 print()
 
-print(generate_id("INS", 1))
-print(generate_id("INS", 12))
-print(generate_id("INS", 999))
+print("Generating Inspection IDs")
+
+print(generate_inspection_id())
+print(generate_inspection_id())
