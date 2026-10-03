@@ -13,6 +13,7 @@ __pycache__/
 
 # Large model files (optional)
 *.pt
+!models/best.pt
 
 database/railway.db
 
