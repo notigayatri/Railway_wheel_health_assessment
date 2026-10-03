@@ -343,8 +343,7 @@ async def inspect_wheel(
         gradcam_path = str(gc_out)
         gradcam_url = _url_for_file(gradcam_path)
     except Exception:
-        import traceback; traceback.print_exc()
-        ###pass  # Grad-CAM is non-critical; do not fail the whole request
+        pass  # Grad-CAM is non-critical; do not fail the whole request
 
     # ── 8. TTA Reliability ────────────────────────────────────────────────
     try:
