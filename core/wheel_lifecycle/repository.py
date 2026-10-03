@@ -99,15 +99,26 @@ class WheelRepository:
     # INSPECTION OPERATIONS
     # =====================================================
 
-    def create_inspection(self, inspection: Inspection):
+    def create_inspection(self, inspection: Inspection,
+                          reliability: str = None,
+                          std_deviation: float = None,
+                          risk_score: float = None,
+                          recommended_action: str = None,
+                          annotated_image_path: str = None,
+                          gradcam_image_path: str = None):
 
         cursor = self.db.cursor()
 
         cursor.execute("""
-        INSERT OR IGNORE INTO inspections
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        INSERT OR IGNORE INTO inspections (
+            inspection_id, asset_id, image_name, image_path,
+            inspection_date, defect_type, severity, confidence,
+            processing_time, notes,
+            reliability, std_deviation, risk_score,
+            recommended_action, annotated_image_path, gradcam_image_path
+        )
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
-
             inspection.inspection_id,
             inspection.asset_id,
             inspection.image_name,
@@ -117,8 +128,13 @@ class WheelRepository:
             inspection.severity,
             inspection.confidence,
             inspection.processing_time,
-            inspection.notes
-
+            inspection.notes,
+            reliability,
+            std_deviation,
+            risk_score,
+            recommended_action,
+            annotated_image_path,
+            gradcam_image_path,
         ))
 
         self.db.commit()
@@ -149,6 +165,19 @@ class WheelRepository:
         WHERE asset_id=?
         ORDER BY inspection_date DESC
         """, (asset_id,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_defect_history(self, asset_id: str, defect_type: str):
+
+        cursor = self.db.cursor()
+
+        cursor.execute("""
+        SELECT *
+        FROM inspections
+        WHERE asset_id=? AND defect_type=?
+        ORDER BY inspection_date DESC
+        """, (asset_id, defect_type))
 
         return [dict(row) for row in cursor.fetchall()]
 
@@ -207,5 +236,41 @@ class WheelRepository:
         WHERE status='Critical'
         """)
         stats["critical"] = cursor.fetchone()[0]
+
+        # Severity distribution across all inspections
+        cursor.execute("""
+        SELECT severity, COUNT(*) as count
+        FROM inspections
+        WHERE severity IS NOT NULL
+        GROUP BY severity
+        """)
+        stats["severity_distribution"] = {
+            row["severity"]: row["count"]
+            for row in cursor.fetchall()
+        }
+
+        # Defect type distribution
+        cursor.execute("""
+        SELECT defect_type, COUNT(*) as count
+        FROM inspections
+        WHERE defect_type IS NOT NULL
+        GROUP BY defect_type
+        """)
+        stats["defect_distribution"] = {
+            row["defect_type"]: row["count"]
+            for row in cursor.fetchall()
+        }
+
+        # Recent inspections (last 10)
+        cursor.execute("""
+        SELECT inspection_id, asset_id, image_name, inspection_date,
+               defect_type, severity, risk_score, recommended_action
+        FROM inspections
+        ORDER BY inspection_date DESC
+        LIMIT 10
+        """)
+        stats["recent_inspections"] = [
+            dict(row) for row in cursor.fetchall()
+        ]
 
         return stats

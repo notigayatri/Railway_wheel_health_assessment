@@ -43,7 +43,9 @@ def score_defect(defect_name, severity_label, reliability_label, asset_id=None):
     defect_weight = DEFECT_TYPE_WEIGHT.get(defect_name, DEFAULT_DEFECT_WEIGHT)
     severity_weight = SEVERITY_WEIGHT.get(severity_label, DEFAULT_SEVERITY_WEIGHT)
     reliability_factor = RELIABILITY_FACTOR.get(reliability_label, DEFAULT_RELIABILITY_FACTOR)
-    trend_weight, trend_note = get_trend_weight(asset_id)
+    trend_weight, trend_note = get_trend_weight(
+        asset_id, defect_type=defect_name, current_severity=severity_label
+    )
 
     raw_score = (defect_weight + severity_weight + trend_weight) * reliability_factor
     risk_score = round(min(raw_score, 100), 1)  # cap at 100 for readability

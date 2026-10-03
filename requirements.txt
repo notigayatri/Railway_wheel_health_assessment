@@ -6,3 +6,7 @@ scikit-image
 scikit-learn
 torch
 grad-cam
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles

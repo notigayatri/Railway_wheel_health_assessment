@@ -9,6 +9,9 @@ class HistoryManager:
     def get_history(self, asset_id):
         return self.repo.get_history(asset_id)
 
+    def get_defect_history(self, asset_id, defect_type):
+        return self.repo.get_defect_history(asset_id, defect_type)
+
     def get_latest_inspection(self, asset_id):
 
         history = self.repo.get_history(asset_id)
