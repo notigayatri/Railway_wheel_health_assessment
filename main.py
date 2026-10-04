@@ -88,7 +88,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],          # Frontend team should tighten this in prod
-    allow_credentials=True,
+    allow_credentials=False,      # Must be False when using wildcard origins
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -274,6 +274,14 @@ async def inspect_wheel(
     ),
 ):
     t_start = time.perf_counter()
+
+    # ── 0. Sanitize wheel_id ──────────────────────────────────────────────
+    # Swagger UI sends the literal placeholder "string" when the user
+    # doesn't clear the field.  Treat that (and whitespace-only) as empty.
+    if wheel_id is not None:
+        wheel_id = wheel_id.strip()
+        if not wheel_id or wheel_id.lower() == "string":
+            wheel_id = None
 
     # ── 1. Validate and save uploaded image ───────────────────────────────
     if image.content_type not in ("image/jpeg", "image/png", "image/jpg"):

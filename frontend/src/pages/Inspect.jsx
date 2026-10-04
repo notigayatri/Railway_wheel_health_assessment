@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { MOCK, imgUrl, inspect } from "../api.js";
+import { imgUrl, inspect } from "../api.js";
 import { Badge, Bar, Gauge, Trend, fmt } from "../ui.jsx";
 
 const STAGES = ["Detecting defects", "Measuring severity", "Checking reliability", "Building heatmap", "Scoring risk"];
 
 function Viewer({ res, preview }) {
   const [tab, setTab] = useState("det");
-  const src = MOCK ? preview : imgUrl(tab === "det" ? res.annotated_image_url : res.gradcam_image_url);
+  // Prefer the real backend-generated image; fall back to local preview only if URL is null
+  const backendSrc = imgUrl(tab === "det" ? res.annotated_image_url : res.gradcam_image_url);
+  const src = backendSrc || preview;
+  const hasGradcam = !!res.gradcam_image_url;
   return (
     <section className="panel">
       <div className="tabs" role="tablist">
@@ -14,10 +17,14 @@ function Viewer({ res, preview }) {
         <button role="tab" aria-selected={tab === "cam"} onClick={() => setTab("cam")}>Model attention</button>
       </div>
       <div className="viewer">
-        <a href={src} target="_blank" rel="noreferrer" title="Open full size"><img src={src} alt={tab === "det" ? "Wheel with detected defects" : "Model attention heatmap"} /></a>
-        {MOCK && tab === "cam" && <div className="heat" />}
+        {src ? (
+          <a href={src} target="_blank" rel="noreferrer" title="Open full size"><img src={src} alt={tab === "det" ? "Wheel with detected defects" : "Model attention heatmap"} /></a>
+        ) : (
+          <p className="muted">No {tab === "det" ? "annotated" : "Grad-CAM"} image was generated for this inspection.</p>
+        )}
       </div>
-      {tab === "cam" && <p className="muted small">The heatmap shows where the model looked. It does not outline the exact defect boundary.</p>}
+      {tab === "cam" && hasGradcam && <p className="muted small">The heatmap shows where the model looked. It does not outline the exact defect boundary.</p>}
+      {tab === "cam" && !hasGradcam && <p className="muted small">Grad-CAM heatmap was not generated. The backend may have encountered an error during generation.</p>}
     </section>
   );
 }
