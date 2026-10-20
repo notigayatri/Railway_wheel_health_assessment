@@ -2,6 +2,15 @@
 main.py — FastAPI Backend for Railway Wheel Health Assessment System
 ====================================================================
 
+Extended to support:
+  - Train Registration Module
+  - Coach and Wheel Management (Train → Coach → Axle → Wheel hierarchy)
+  - Train Operating Schedule Module
+  - Train-Wise Wheel Inspection (with inspection_event_id grouping)
+  - Intelligent Maintenance Scheduling Engine
+  - Maintenance Job Management
+  - Extended Fleet Dashboard
+
 Primary entry point for the REST API.
 Run with:
     uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -14,8 +23,6 @@ ReDoc:
 
 CLI mode (backward-compatible, for manual testing):
     python main.py
-
-The CLI mode is preserved under the  if __name__ == "__main__"  block.
 """
 
 import sys
@@ -57,6 +64,13 @@ from core.wheel_lifecycle.repository import WheelRepository
 from core.wheel_lifecycle.id_generator import generate_asset_id, generate_inspection_id
 from core.wheel_lifecycle.history import HistoryManager
 from core.wheel_lifecycle.dashboard import Dashboard
+from core.wheel_lifecycle.fleet_repository import FleetRepository
+
+# ── New routers ───────────────────────────────────────────────────────────────
+from routers.trains import router as trains_router
+from routers.schedules import router as schedules_router
+from routers.maintenance import router as maintenance_router
+from routers.fleet_dashboard import router as fleet_dashboard_router
 
 
 # ── Static output directories ─────────────────────────────────────────────────
@@ -73,13 +87,16 @@ for _d in (ANNOTATED_DIR, GRADCAM_DIR, UPLOADS_DIR):
 # ═════════════════════════════════════════════════════════════════════════════
 
 app = FastAPI(
-    title="Railway Wheel Health Assessment API",
+    title="Train-Wise Wheel Health Monitoring & Intelligent Maintenance Scheduling",
     description=(
         "REST API for AI-powered railway wheel defect detection, severity "
-        "assessment, reliability scoring, Grad-CAM explainability, and "
-        "maintenance priority calculation."
+        "assessment, reliability scoring, Grad-CAM explainability, "
+        "maintenance priority calculation, and intelligent maintenance scheduling. "
+        "\n\n**New in v2.0:** Train registration, coach/wheel hierarchy, "
+        "operating schedule management, inspection event grouping, and "
+        "automated maintenance recommendations."
     ),
-    version="1.0.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -94,14 +111,17 @@ app.add_middleware(
 )
 
 # ── Static file serving ───────────────────────────────────────────────────────
-# Frontend can load images via:
-#   http://localhost:8000/outputs/annotated/<filename>
-#   http://localhost:8000/outputs/gradcam/<filename>
 app.mount(
     "/outputs",
     StaticFiles(directory=str(PROJECT_ROOT / "outputs")),
     name="outputs",
 )
+
+# ── Register new routers ──────────────────────────────────────────────────────
+app.include_router(trains_router)
+app.include_router(schedules_router)
+app.include_router(maintenance_router)
+app.include_router(fleet_dashboard_router)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -138,8 +158,11 @@ class DefectDetail(BaseModel):
 class InspectionResponse(BaseModel):
     """Complete structured result of POST /api/inspect."""
     inspection_id: str
+    inspection_event_id: Optional[str]  = Field(None, description="Groups all defect records from one image upload")
     asset_id: str
     wheel_id: Optional[str]             = Field(None, description="User-supplied wheel ID if provided")
+    train_id: Optional[int]             = Field(None, description="Associated train ID if wheel is registered")
+    coach_id: Optional[int]             = Field(None, description="Associated coach ID if wheel is registered")
     image_name: str
     inspection_date: str
     trend_status: str                   = Field(..., description="FIRST_INSPECTION | WORSENING | STABLE | IMPROVING | INSUFFICIENT_HISTORY")
@@ -258,7 +281,10 @@ def _resolve_wheel_trend(
         "Runs YOLO detection, severity clustering, TTA reliability, "
         "Grad-CAM explainability, and maintenance priority. "
         "Creates/updates the wheel record and stores the inspection. "
-        "Returns a complete structured JSON result."
+        "Returns a complete structured JSON result.\n\n"
+        "**New in v2.0:** Supports `coach_id` to associate inspection with a train/coach. "
+        "All defect records from one upload share an `inspection_event_id`. "
+        "Backward compatible: omit `coach_id` for standalone wheel inspections."
     ),
 )
 async def inspect_wheel(
@@ -272,6 +298,13 @@ async def inspect_wheel(
             "to build inspection history and trend analysis."
         ),
     ),
+    coach_id: Optional[int] = Form(
+        None,
+        description=(
+            "Optional coach ID. If supplied, the wheel is validated as belonging to this coach. "
+            "The inspection event is linked to the coach's train."
+        ),
+    ),
 ):
     t_start = time.perf_counter()
 
@@ -282,6 +315,17 @@ async def inspect_wheel(
         wheel_id = wheel_id.strip()
         if not wheel_id or wheel_id.lower() == "string":
             wheel_id = None
+
+    # ── 0b. Resolve coach/train linkage ───────────────────────────────────
+    resolved_train_id: Optional[int] = None
+    resolved_coach_id: Optional[int] = coach_id
+    fleet_repo = FleetRepository()
+
+    if coach_id is not None:
+        coach = fleet_repo.get_coach_by_id(coach_id)
+        if coach is None:
+            raise HTTPException(status_code=404, detail=f"Coach {coach_id} not found.")
+        resolved_train_id = coach["train_id"]
 
     # ── 1. Validate and save uploaded image ───────────────────────────────
     if image.content_type not in ("image/jpeg", "image/png", "image/jpg"):
@@ -311,13 +355,31 @@ async def inspect_wheel(
         if wheel_record is None:
             # User supplied an ID that does not exist yet — create it
             asset_id = wheel_id
-            new_wheel = Wheel(asset_id=asset_id)
+            new_wheel = Wheel(
+                asset_id=asset_id,
+                train_id=str(resolved_train_id) if resolved_train_id else None,
+                coach_id=str(resolved_coach_id) if resolved_coach_id else None,
+            )
             repo.create_wheel(new_wheel)
         else:
             asset_id = wheel_id
+            # Validate coach membership if coach_id supplied
+            if coach_id is not None:
+                if not fleet_repo.validate_wheel_belongs_to_coach(asset_id, coach_id):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Wheel '{asset_id}' does not belong to coach {coach_id}. "
+                            "Either omit coach_id or select the correct wheel."
+                        ),
+                    )
     else:
         asset_id = generate_asset_id()
-        new_wheel = Wheel(asset_id=asset_id)
+        new_wheel = Wheel(
+            asset_id=asset_id,
+            train_id=str(resolved_train_id) if resolved_train_id else None,
+            coach_id=str(resolved_coach_id) if resolved_coach_id else None,
+        )
         repo.create_wheel(new_wheel)
 
     # ── 4. Retrieve prior history BEFORE saving this inspection ───────────
@@ -432,8 +494,25 @@ async def inspect_wheel(
     inspection_date_str = datetime.now().isoformat(timespec="seconds")
     repo.update_wheel_status(asset_id, wheel_status, inspection_date_str)
 
-    # ── 11. Save inspection records (one row per defect instance) ─────────
+    # ── 10b. Create inspection event record ───────────────────────────────
     t_elapsed = round(time.perf_counter() - t_start, 3)
+    event_id = fleet_repo.create_inspection_event(
+        asset_id=asset_id,
+        train_id=resolved_train_id,
+        coach_id=resolved_coach_id,
+        image_name=image.filename,
+        image_path=str(upload_path),
+        inspection_date=inspection_date_str,
+        wheel_risk_score=wheel_risk_score,
+        wheel_recommended_action=wheel_action,
+        trend_status=trend_status,
+        total_defects=len(defect_details),
+        annotated_image_path=annotated_path,
+        gradcam_image_path=gradcam_path,
+        processing_time=t_elapsed,
+    )
+
+    # ── 11. Save inspection records (one row per defect instance) ─────────
     first_inspection_id: Optional[str] = None
 
     if detections:
@@ -463,6 +542,16 @@ async def inspect_wheel(
                 annotated_image_path=annotated_path,
                 gradcam_image_path=gradcam_path,
             )
+            # Link defect record to the inspection event
+            try:
+                conn = fleet_repo.db
+                conn.execute(
+                    "UPDATE inspections SET inspection_event_id=? WHERE inspection_id=?",
+                    (event_id, iid),
+                )
+                conn.commit()
+            except Exception:
+                pass  # non-critical; event linkage is best-effort
     else:
         # No defects found — still record the inspection
         iid = generate_inspection_id()
@@ -484,12 +573,24 @@ async def inspect_wheel(
             annotated_image_path=annotated_path,
             gradcam_image_path=gradcam_path,
         )
+        try:
+            conn = fleet_repo.db
+            conn.execute(
+                "UPDATE inspections SET inspection_event_id=? WHERE inspection_id=?",
+                (event_id, iid),
+            )
+            conn.commit()
+        except Exception:
+            pass
 
     # ── 12. Build and return response ─────────────────────────────────────
     return InspectionResponse(
         inspection_id=first_inspection_id,
+        inspection_event_id=event_id,
         asset_id=asset_id,
         wheel_id=wheel_id,
+        train_id=resolved_train_id,
+        coach_id=resolved_coach_id,
         image_name=image.filename,
         inspection_date=inspection_date_str,
         trend_status=trend_status,
@@ -522,7 +623,7 @@ def list_wheels():
             train_id=w.get("train_id"),
             coach_id=w.get("coach_id"),
             status=w.get("status", "Healthy"),
-            inspection_count=w.get("inspection_count", 0),
+            inspection_count=w.get("inspection_count", 0) or 0,
             latest_inspection=w.get("latest_inspection"),
             created_at=w.get("created_at", ""),
             last_updated=w.get("last_updated", ""),
@@ -553,7 +654,7 @@ def get_wheel(wheel_id: str = FPath(..., description="Wheel asset ID e.g. WH0000
         axle_number=w.get("axle_number"),
         position=w.get("position"),
         status=w.get("status", "Healthy"),
-        inspection_count=w.get("inspection_count", 0),
+        inspection_count=w.get("inspection_count", 0) or 0,
         latest_inspection=w.get("latest_inspection"),
         created_at=w.get("created_at", ""),
         last_updated=w.get("last_updated", ""),
@@ -605,11 +706,12 @@ def get_wheel_history(wheel_id: str = FPath(..., description="Wheel asset ID e.g
 @app.get(
     "/api/dashboard",
     response_model=DashboardResponse,
-    summary="Fleet dashboard statistics",
+    summary="Fleet dashboard statistics (legacy)",
     tags=["Dashboard"],
     description=(
         "Returns fleet-wide summary statistics: wheel counts by status, "
-        "severity distribution, defect type breakdown, and last 10 inspections."
+        "severity distribution, defect type breakdown, and last 10 inspections. "
+        "For the extended fleet dashboard see GET /api/fleet/dashboard."
     ),
 )
 def get_dashboard():
@@ -634,7 +736,8 @@ def root():
     """Quick health check — confirms the API is running."""
     return {
         "status": "ok",
-        "message": "Railway Wheel Health Assessment API is running.",
+        "message": "Train-Wise Wheel Health Monitoring & Maintenance Scheduling API is running.",
+        "version": "2.0.0",
         "docs": "/docs",
     }
 
@@ -651,6 +754,7 @@ def health_check():
     all_ok = all(model_files.values())
     return {
         "status": "ok" if all_ok else "degraded",
+        "version": "2.0.0",
         "models": model_files,
     }
 
