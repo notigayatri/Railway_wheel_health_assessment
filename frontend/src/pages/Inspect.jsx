@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { imgUrl, inspect } from "../api.js";
-import { Badge, Bar, Gauge, Trend, fmt } from "../ui.jsx";
+import { useSearchParams } from "react-router-dom";
+import { getCoaches, getTrains, getWheels, imgUrl, inspect, recommend } from "../api.js";
+import { Badge, Bar, Gauge, Plan, Trend, WheelChip, fmt, riskTone } from "../ui.jsx";
 
 const STAGES = ["Detecting defects", "Measuring severity", "Checking reliability", "Building heatmap", "Scoring risk"];
 
@@ -30,27 +31,51 @@ function Viewer({ res, preview }) {
 }
 
 export default function Inspect() {
+  const [params] = useSearchParams();
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
-  const [wheelId, setWheelId] = useState("");
+  const [trainId, setTrainId] = useState(params.get("train") || "");
+  const [coachId, setCoachId] = useState(params.get("coach") || "");
+  const [wheelId, setWheelId] = useState(params.get("wheel") || "");
+  const [trains, setTrains] = useState([]);
+  const [coaches, setCoaches] = useState([]);
+  const [wheels, setWheels] = useState([]);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState(0);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState("");
+  const [plan, setPlan] = useState(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planErr, setPlanErr] = useState("");
   const input = useRef();
 
+  useEffect(() => { getTrains().then(setTrains).catch(() => {}); getWheels().then(setWheels).catch(() => {}); }, []);
+  useEffect(() => { if (!trainId) { setCoaches([]); return; } getCoaches(trainId).then(setCoaches).catch(() => {}); }, [trainId]);
   useEffect(() => {
     if (!busy) return;
     const t = setInterval(() => setStage((s) => Math.min(s + 1, STAGES.length - 1)), 700);
     return () => clearInterval(t);
   }, [busy]);
 
-  const pick = (f) => { if (!f) return; setFile(f); setPreview(URL.createObjectURL(f)); setRes(null); setErr(""); };
+  const wheelOpts = wheels.filter((w) => String(w.coach_id) === String(coachId));
+  const picked = wheels.find((w) => w.asset_id === wheelId);
+  const trainOf = (id) => trains.find((t) => t.id === id);
+
+  const pickTrain = (v) => { setTrainId(v); setCoachId(""); setWheelId(""); };
+  const pickCoach = (v) => { setCoachId(v); setWheelId(""); };
+  const pick = (f) => { if (!f) return; setFile(f); setPreview(URL.createObjectURL(f)); setRes(null); setPlan(null); setErr(""); };
   const run = async () => {
-    setBusy(true); setStage(0); setErr(""); setRes(null);
-    try { setRes(await inspect(file, wheelId.trim())); } catch (e) { setErr(e.message); }
+    setBusy(true); setStage(0); setErr(""); setRes(null); setPlan(null); setPlanErr("");
+    try { setRes(await inspect(file, wheelId, coachId)); getWheels().then(setWheels).catch(() => {}); } catch (e) { setErr(e.message); }
     setBusy(false);
   };
+  const makePlan = async () => {
+    setPlanBusy(true); setPlanErr("");
+    try { setPlan(await recommend(res.asset_id)); } catch (e) { setPlanErr(e.message); }
+    setPlanBusy(false);
+  };
+
+  const t = res && trainOf(res.train_id);
 
   return (
     <>
@@ -63,10 +88,26 @@ export default function Inspect() {
           <input ref={input} type="file" accept="image/jpeg,image/png" hidden onChange={(e) => pick(e.target.files[0])} />
         </div>
         <div className="fields">
-          <label>Wheel ID (optional)
-            <input value={wheelId} onChange={(e) => setWheelId(e.target.value)} placeholder="e.g. WH000001" />
+          <label>Train
+            <select value={trainId} onChange={(e) => pickTrain(e.target.value)}>
+              <option value="">Select a train</option>
+              {trains.map((x) => <option key={x.id} value={x.id}>{x.train_number} · {x.train_name}</option>)}
+            </select>
           </label>
-          <p className="muted small">Leave empty for a new wheel. Enter an existing ID to add this inspection to its history and trend.</p>
+          <label>Coach
+            <select value={coachId} disabled={!trainId} onChange={(e) => pickCoach(e.target.value)}>
+              <option value="">{trainId ? "Select a coach" : "Pick a train first"}</option>
+              {coaches.map((c) => <option key={c.id} value={c.id}>{c.coach_number}{c.coach_type ? ` · ${c.coach_type}` : ""}</option>)}
+            </select>
+          </label>
+          <label>Wheel
+            <select value={wheelId} disabled={!coachId} onChange={(e) => setWheelId(e.target.value)}>
+              <option value="">{coachId ? (wheelOpts.length ? "Select a wheel" : "No wheels on this coach") : "Pick a coach first"}</option>
+              {wheelOpts.map((w) => <option key={w.asset_id} value={w.asset_id}>{w.wheel_identifier} · {w.asset_id}</option>)}
+            </select>
+          </label>
+          {picked && <div className="chips" style={{ margin: 0 }}><WheelChip w={picked} /><span className="muted small">{picked.inspection_count ?? 0} past inspection(s)</span></div>}
+          <p className="muted small">Choose the wheel from the registry so this result joins its history, trend and schedule. Leave empty to inspect an image without a registered wheel.</p>
           <button className="primary" disabled={!file || busy} onClick={run}>{busy ? "Inspecting..." : "Run inspection"}</button>
         </div>
       </section>
@@ -88,15 +129,16 @@ export default function Inspect() {
 
       {res && (
         <>
-          <section className={`reveal banner ${res.wheel_risk_score < 34 ? "ok" : res.wheel_risk_score < 67 ? "warn" : "bad"}`}>
+          <section className={`reveal banner ${riskTone(res.wheel_risk_score)}`}>
             <Gauge value={res.wheel_risk_score} />
             <div>
               <h2>{res.wheel_recommended_action}</h2>
-              <p>Wheel {res.asset_id} &middot; {res.total_defects_detected} defect(s) found &middot; {res.processing_time_seconds}s</p>
+              <p>Wheel {res.asset_id}{t ? ` · Train ${t.train_number}` : ""} &middot; {res.total_defects_detected} defect(s) found &middot; {res.processing_time_seconds}s</p>
               <Trend value={res.trend_status} />
               <p className="muted small">{fmt(res.inspection_date)}</p>
             </div>
           </section>
+          <Plan rec={plan} busy={planBusy} err={planErr} onGenerate={makePlan} />
           <Viewer res={res} preview={preview} />
           <section className="panel">
             <h2>Defects</h2>
@@ -105,7 +147,7 @@ export default function Inspect() {
                 <header><h3>{d.label}</h3><Badge>{d.severity}</Badge><span className="risk">Risk {d.risk_score}</span></header>
                 <div className="meta">
                   <div>Detection confidence <Bar value={d.confidence} /> {(d.confidence * 100).toFixed(0)}%</div>
-                  <div>Stability across tests <Badge>{d.reliability}</Badge> (spread {d.std_deviation})</div>
+                  <div>Stability across tests <Badge>{d.reliability}</Badge>{d.std_deviation != null && <> (spread {d.std_deviation})</>}</div>
                 </div>
                 <p><b>{d.recommended_action}.</b> <span className="muted">{d.trend_note}</span></p>
               </article>
